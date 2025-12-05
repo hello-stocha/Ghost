@@ -1,3 +1,4 @@
-export {PublicationSection} from './PublicationsSection';
-export {LabsSection} from './LabsSection';
-export {IntegrationsSection} from './IntegrationsSection';
+export {PublicationSection} from './publications-section';
+export {LabsSection} from './labs-section';
+export {IntegrationsSection} from './integrations-section';
+export {MemberWelcomeEmailsSection} from './member-welcome-emails-section';

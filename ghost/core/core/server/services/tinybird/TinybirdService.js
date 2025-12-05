@@ -48,17 +48,15 @@ const TINYBIRD_PIPES = [
     'api_kpis',
     'api_active_visitors',
     'api_post_visitor_counts',
-    'api_top_browsers',
-    'api_top_devices',
     'api_top_locations',
-    'api_top_os',
     'api_top_pages',
     'api_top_sources',
     'api_top_utm_sources',
     'api_top_utm_mediums',
     'api_top_utm_campaigns',
     'api_top_utm_contents',
-    'api_top_utm_terms'
+    'api_top_utm_terms',
+    'api_top_devices'
 ];
 
 /**

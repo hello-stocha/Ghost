@@ -8,6 +8,9 @@ const ObjectId = require('bson-objectid').default;
 const {NotFoundError} = require('@tryghost/errors');
 const validator = require('@tryghost/validator');
 const crypto = require('crypto');
+const config = require('../../../../../shared/config');
+const StartOutboxProcessingEvent = require('../../../outbox/events/StartOutboxProcessingEvent');
+const {MEMBER_WELCOME_EMAIL_SLUGS} = require('../../../member-welcome-emails/constants');
 
 const messages = {
     noStripeConnection: 'Cannot {action} without a Stripe Connection',
@@ -23,6 +26,8 @@ const messages = {
 };
 
 const SUBSCRIPTION_STATUS_TRIALING = 'trialing';
+
+const WELCOME_EMAIL_SOURCES = ['member'];
 
 /**
  * @typedef {object} ITokenService
@@ -43,12 +48,14 @@ module.exports = class MemberRepository {
      * @param {any} deps.StripeCustomer
      * @param {any} deps.StripeCustomerSubscription
      * @param {any} deps.OfferRedemption
+     * @param {any} deps.Outbox
      * @param {import('../../services/stripe-api')} deps.stripeAPIService
      * @param {any} deps.labsService
      * @param {any} deps.productRepository
      * @param {any} deps.offerRepository
      * @param {ITokenService} deps.tokenService
      * @param {any} deps.newslettersService
+     * @param {any} deps.AutomatedEmail
      */
     constructor({
         Member,
@@ -62,12 +69,14 @@ module.exports = class MemberRepository {
         StripeCustomer,
         StripeCustomerSubscription,
         OfferRedemption,
+        Outbox,
         stripeAPIService,
         labsService,
         productRepository,
         offerRepository,
         tokenService,
-        newslettersService
+        newslettersService,
+        AutomatedEmail
     }) {
         this._Member = Member;
         this._MemberNewsletter = MemberNewsletter;
@@ -78,6 +87,7 @@ module.exports = class MemberRepository {
         this._MemberStatusEvent = MemberStatusEvent;
         this._MemberProductEvent = MemberProductEvent;
         this._OfferRedemption = OfferRedemption;
+        this._Outbox = Outbox;
         this._StripeCustomer = StripeCustomer;
         this._StripeCustomerSubscription = StripeCustomerSubscription;
         this._stripeAPIService = stripeAPIService;
@@ -86,6 +96,7 @@ module.exports = class MemberRepository {
         this.tokenService = tokenService;
         this._newslettersService = newslettersService;
         this._labsService = labsService;
+        this._AutomatedEmail = AutomatedEmail;
 
         DomainEvents.subscribe(OfferRedemptionEvent, async function (event) {
             if (!event.data.offerId) {
@@ -326,11 +337,63 @@ module.exports = class MemberRepository {
             withRelated.push('newsletters');
         }
 
-        const member = await this._Member.add({
-            ...memberData,
-            ...memberStatusData,
-            labels
-        }, {...options, withRelated});
+        const context = options && options.context || {};
+        const source = this._resolveContextSource(context);
+        const eventData = _.pick(data, ['created_at']);
+
+        const memberAddOptions = {...(options || {}), withRelated};
+        let member;
+
+        if (config.get('memberWelcomeEmailTestInbox') && WELCOME_EMAIL_SOURCES.includes(source)) {
+            const freeWelcomeEmail = this._AutomatedEmail ? await this._AutomatedEmail.findOne({slug: MEMBER_WELCOME_EMAIL_SLUGS.free}) : null;
+            const isFreeWelcomeEmailActive = freeWelcomeEmail && freeWelcomeEmail.get('lexical') && freeWelcomeEmail.get('status') === 'active';
+            
+            const runMemberCreation = async (transacting) => {
+                const newMember = await this._Member.add({
+                    ...memberData,
+                    ...memberStatusData,
+                    labels
+                }, {...memberAddOptions, transacting});
+                
+                if (isFreeWelcomeEmailActive) {
+                    const timestamp = eventData.created_at || newMember.get('created_at');
+
+                    await this._Outbox.add({
+                        id: ObjectId().toHexString(),
+                        event_type: MemberCreatedEvent.name,
+                        payload: JSON.stringify({
+                            memberId: newMember.id,
+                            email: newMember.get('email'),
+                            name: newMember.get('name'),
+                            source,
+                            timestamp
+                        })
+                    }, {transacting});
+                }
+                    
+                return newMember;
+            };
+
+            if (memberAddOptions.transacting) {
+                member = await runMemberCreation(memberAddOptions.transacting);
+            } else {
+                member = await this._Member.transaction(runMemberCreation);
+            }
+
+            if (isFreeWelcomeEmailActive) {
+                this.dispatchEvent(StartOutboxProcessingEvent.create({memberId: member.id}), memberAddOptions);
+            }
+        } else {
+            member = await this._Member.add({
+                ...memberData,
+                ...memberStatusData,
+                labels
+            }, memberAddOptions);
+        }
+
+        if (!eventData.created_at) {
+            eventData.created_at = member.get('created_at');
+        }
 
         for (const product of member.related('products').models) {
             await this._MemberProductEvent.add({
@@ -338,15 +401,6 @@ module.exports = class MemberRepository {
                 product_id: product.id,
                 action: 'added'
             }, options);
-        }
-
-        const context = options && options.context || {};
-        const source = this._resolveContextSource(context);
-
-        const eventData = _.pick(data, ['created_at']);
-
-        if (!eventData.created_at) {
-            eventData.created_at = member.get('created_at');
         }
 
         await this._MemberStatusEvent.add({
@@ -401,7 +455,7 @@ module.exports = class MemberRepository {
                     });
                 }
             }
-        }
+        }       
         this.dispatchEvent(MemberCreatedEvent.create({
             memberId: member.id,
             batchId: options.batch_id,

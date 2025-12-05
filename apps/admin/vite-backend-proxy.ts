@@ -11,7 +11,7 @@ async function resolveGhostSiteUrl() {
     const MAX_ATTEMPTS = 20;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
-            const siteEndpoint = new URL("/ghost/api/admin/site", GHOST_URL);
+            const siteEndpoint = new URL("/ghost/api/admin/site/", GHOST_URL);
             const response = await fetch(siteEndpoint);
             const data = (await response.json()) as { site: { url: string } };
             return {
@@ -68,19 +68,12 @@ function createAdminApiProxy(site: {
 }
 
 /**
- * Creates proxy configuration for Ember Admin assets.
+ * Creates proxy configuration for Ember CLI live reload script.
  */
-function createEmberAssetsProxy(site: {
-    url: string;
-    host: string;
-}): Record<string, ProxyOptions> {
+function createEmberLiveReloadProxy(): Record<string, ProxyOptions> {
     return {
-        "^/ghost/assets/.*": {
-            target: site.url,
-            changeOrigin: true,
-        },
-        "^/ghost/ember-cli-live-reload.js": {
-            target: site.url,
+        "^/ember-cli-live-reload.js": {
+            target: "http://localhost:4200",
             changeOrigin: true,
         },
     };
@@ -89,7 +82,7 @@ function createEmberAssetsProxy(site: {
 /**
  * Vite plugin that injects proxy configurations for:
  * 1. Ghost Admin API - proxies /ghost/api requests to the Ghost backend
- * 2. Ember Assets - proxies /ghost/assets and ember-cli-live-reload.js
+ * 2. Ember Live Reload - proxies ember-cli-live-reload.js to Ember dev server
  */
 export function ghostBackendProxyPlugin(): Plugin {
     let siteUrl!: { url: string; host: string };
@@ -131,7 +124,7 @@ Ensure the Ghost backend is running. If needed, set the GHOST_URL environment va
             server.config.server.proxy = {
                 ...server.config.server.proxy,
                 ...createAdminApiProxy(siteUrl),
-                ...createEmberAssetsProxy(siteUrl),
+                ...createEmberLiveReloadProxy(),
             };
         },
 

@@ -1,3 +1,5 @@
+TOKEN "axis" READ
+
 NODE mv_hits_0
 SQL >
 
@@ -8,6 +10,7 @@ SQL >
         min(timestamp) as first_pageview,
         max(timestamp) as last_pageview,
         argMin(source, timestamp) as source,
+        argMin(device, timestamp) as device,
         argMin(utm_source, timestamp) as utm_source,
         argMin(utm_medium, timestamp) as utm_medium,
         argMin(utm_campaign, timestamp) as utm_campaign,
@@ -30,6 +33,7 @@ SQL >
         last_pageview - first_pageview AS duration,
         pageviews = 1 AS is_bounce,
         source,
+        device,
         utm_source,
         utm_medium,
         utm_campaign,
